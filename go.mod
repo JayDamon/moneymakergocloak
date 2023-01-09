@@ -1,4 +1,4 @@
-module github.com/jaydamon/moneymaker-gocloak
+module github.com/jaydamon/moneymakergocloak
 
 go 1.19
 
