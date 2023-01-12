@@ -34,27 +34,13 @@ func NewKeyCloak(issuerUri string, clientId string, clientSecret string, realm s
 	}
 }
 
-func (auth *KeyCloakMiddleware) extractBearerToken(token string) string {
-	return strings.Replace(token, "Bearer ", "", 1)
-}
-
 func (auth *KeyCloakMiddleware) VerifyToken(next http.Handler) http.Handler {
 	f := func(w http.ResponseWriter, r *http.Request) {
-		token := r.Header.Get("Authorization")
-		if token == "" {
-			msg := "Authorization header missing"
-			http.Error(w, msg, http.StatusUnauthorized)
-			log.Print(msg)
-			return
-		}
 
-		token = auth.extractBearerToken(token)
-
-		if token == "" {
-			msg := "Bearer Token missing"
-			http.Error(w, msg, http.StatusUnauthorized)
-			log.Print(msg)
-			return
+		token, err := extractTokenFromReqeust(w, r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			log.Print(err.Error())
 		}
 
 		goCloakConfig := auth.KeyCloakConfig
@@ -78,4 +64,42 @@ func (auth *KeyCloakMiddleware) VerifyToken(next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(f)
+}
+
+func ExtractUserIdFromToken(w http.ResponseWriter, r *http.Request, keyCloakConfig *KeyCloakConfig) string {
+	token, err := extractTokenFromReqeust(w, r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		log.Print(err.Error())
+	}
+
+	gocloak := keyCloakConfig.GoCloak
+	_, claims, err := gocloak.DecodeAccessToken(context.Background(), token, keyCloakConfig.Realm)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		log.Print(err.Error())
+	}
+
+	id := (*claims)["sub"]
+
+	return fmt.Sprintf("%v", id)
+}
+
+func extractTokenFromReqeust(w http.ResponseWriter, r *http.Request) (string, error) {
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		return "", fmt.Errorf("authorization header missing")
+	}
+
+	token = extractBearerToken(token)
+
+	if token == "" {
+		return "", fmt.Errorf("bearer Token missing")
+	}
+
+	return token, nil
+}
+
+func extractBearerToken(token string) string {
+	return strings.Replace(token, "Bearer ", "", 1)
 }
