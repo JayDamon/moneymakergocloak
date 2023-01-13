@@ -19,18 +19,20 @@ type KeyCloakConfig struct {
 	ClientId     string
 	ClientSecret string
 	Realm        string
+	DebugActive  bool
 }
 
 func NewKeyCloakMiddleWare(config *KeyCloakConfig) *KeyCloakMiddleware {
 	return &KeyCloakMiddleware{KeyCloakConfig: config}
 }
 
-func NewKeyCloak(issuerUri string, clientId string, clientSecret string, realm string) *KeyCloakConfig {
+func NewKeyCloak(issuerUri string, clientId string, clientSecret string, realm string, debugActive bool) *KeyCloakConfig {
 	return &KeyCloakConfig{
 		GoCloak:      gocloak.NewClient(issuerUri),
 		ClientId:     clientId,
 		ClientSecret: clientSecret,
 		Realm:        realm,
+		DebugActive:  debugActive,
 	}
 }
 
@@ -45,7 +47,7 @@ func (auth *KeyCloakMiddleware) VerifyToken(next http.Handler) http.Handler {
 
 		goCloakConfig := auth.KeyCloakConfig
 		goCloak := goCloakConfig.GoCloak
-		goCloak.RestyClient().SetDebug(true)
+		goCloak.RestyClient().SetDebug(auth.KeyCloakConfig.DebugActive)
 
 		result, err := goCloak.RetrospectToken(context.Background(), token, goCloakConfig.ClientId, goCloakConfig.ClientSecret, goCloakConfig.Realm)
 		if err != nil {
