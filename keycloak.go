@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/Nerzal/gocloak/v12"
@@ -26,7 +27,14 @@ func NewKeyCloakMiddleWare(config *KeyCloakConfig) *KeyCloakMiddleware {
 	return &KeyCloakMiddleware{KeyCloakConfig: config}
 }
 
-func NewKeyCloak(issuerUri string, clientId string, clientSecret string, realm string, debugActive bool) *KeyCloakConfig {
+func NewKeyCloak() *KeyCloakConfig {
+
+	issuerUri := getOrDefault("ISSUER_URI", "http://keycloak:8081/auth")
+	clientId := getOrDefault("CLIENT_NAME", "account-link-service-service")
+	clientSecret := getOrDefault("CLIENT_SECRET", "wQeV8pZwtBf9dIdKTGrqceyM3eeleokY")
+	realm := getOrDefault("REALM", "moneymaker")
+	debugActive := getOrDefaultBool("DEBUG_ACTIVE", false)
+
 	return &KeyCloakConfig{
 		GoCloak:      gocloak.NewClient(issuerUri),
 		ClientId:     clientId,
@@ -39,7 +47,7 @@ func NewKeyCloak(issuerUri string, clientId string, clientSecret string, realm s
 func (auth *KeyCloakMiddleware) VerifyToken(next http.Handler) http.Handler {
 	f := func(w http.ResponseWriter, r *http.Request) {
 
-		token, err := extractTokenFromReqeust(w, r)
+		token, err := extractTokenFromRequest(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			log.Print(err.Error())
@@ -69,14 +77,14 @@ func (auth *KeyCloakMiddleware) VerifyToken(next http.Handler) http.Handler {
 }
 
 func ExtractUserIdFromToken(w http.ResponseWriter, r *http.Request, keyCloakConfig *KeyCloakConfig) string {
-	token, err := extractTokenFromReqeust(w, r)
+	token, err := extractTokenFromRequest(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		log.Print(err.Error())
 	}
 
-	gocloak := keyCloakConfig.GoCloak
-	_, claims, err := gocloak.DecodeAccessToken(context.Background(), token, keyCloakConfig.Realm)
+	goCloak := keyCloakConfig.GoCloak
+	_, claims, err := goCloak.DecodeAccessToken(context.Background(), token, keyCloakConfig.Realm)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		log.Print(err.Error())
@@ -87,7 +95,7 @@ func ExtractUserIdFromToken(w http.ResponseWriter, r *http.Request, keyCloakConf
 	return fmt.Sprintf("%v", id)
 }
 
-func extractTokenFromReqeust(w http.ResponseWriter, r *http.Request) (string, error) {
+func extractTokenFromRequest(r *http.Request) (string, error) {
 	token := r.Header.Get("Authorization")
 	if token == "" {
 		return "", fmt.Errorf("authorization header missing")
@@ -104,4 +112,24 @@ func extractTokenFromReqeust(w http.ResponseWriter, r *http.Request) (string, er
 
 func extractBearerToken(token string) string {
 	return strings.Replace(token, "Bearer ", "", 1)
+}
+
+func getOrDefault(envVar string, defaultVal string) string {
+	val := os.Getenv(envVar)
+	if val == "" {
+		return defaultVal
+	}
+	return val
+}
+
+func getOrDefaultBool(envVar string, defaultVal bool) bool {
+	val := os.Getenv(envVar)
+	var returnVal = defaultVal
+	if val == "true" {
+		returnVal = true
+	} else if val == "false" {
+		returnVal = false
+	}
+
+	return returnVal
 }
