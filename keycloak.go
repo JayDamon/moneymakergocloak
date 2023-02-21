@@ -11,11 +11,11 @@ import (
 	"github.com/Nerzal/gocloak/v12"
 )
 
-type KeyCloakMiddleware struct {
-	KeyCloakConfig *KeyCloakConfig
+type Middleware struct {
+	KeyCloakConfig *Configuration
 }
 
-type KeyCloakConfig struct {
+type Configuration struct {
 	GoCloak      *gocloak.GoCloak
 	ClientId     string
 	ClientSecret string
@@ -23,11 +23,11 @@ type KeyCloakConfig struct {
 	DebugActive  bool
 }
 
-func NewKeyCloakMiddleWare(config *KeyCloakConfig) *KeyCloakMiddleware {
-	return &KeyCloakMiddleware{KeyCloakConfig: config}
+func NewMiddleWare(config *Configuration) *Middleware {
+	return &Middleware{KeyCloakConfig: config}
 }
 
-func NewKeyCloak() *KeyCloakConfig {
+func NewConfiguration() *Configuration {
 
 	issuerUri := getOrDefault("ISSUER_URI", "http://keycloak:8081/auth")
 	clientId := getOrDefault("CLIENT_NAME", "account-link-service-service")
@@ -35,7 +35,7 @@ func NewKeyCloak() *KeyCloakConfig {
 	realm := getOrDefault("REALM", "moneymaker")
 	debugActive := getOrDefaultBool("DEBUG_ACTIVE", false)
 
-	return &KeyCloakConfig{
+	return &Configuration{
 		GoCloak:      gocloak.NewClient(issuerUri),
 		ClientId:     clientId,
 		ClientSecret: clientSecret,
@@ -44,7 +44,7 @@ func NewKeyCloak() *KeyCloakConfig {
 	}
 }
 
-func (auth *KeyCloakMiddleware) VerifyToken(next http.Handler) http.Handler {
+func (auth *Middleware) VerifyToken(next http.Handler) http.Handler {
 	f := func(w http.ResponseWriter, r *http.Request) {
 
 		token, err := extractTokenFromRequest(r)
@@ -76,7 +76,7 @@ func (auth *KeyCloakMiddleware) VerifyToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(f)
 }
 
-func ExtractUserIdFromToken(w http.ResponseWriter, r *http.Request, keyCloakConfig *KeyCloakConfig) string {
+func ExtractUserIdFromToken(w http.ResponseWriter, r *http.Request, keyCloakConfig *Configuration) string {
 	token, err := extractTokenFromRequest(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
