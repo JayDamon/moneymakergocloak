@@ -3,6 +3,7 @@ package moneymakergocloak
 import (
 	"context"
 	"fmt"
+	"github.com/rabbitmq/amqp091-go"
 	"log"
 	"net/http"
 	"os"
@@ -44,33 +45,32 @@ func NewConfiguration() *Configuration {
 	}
 }
 
-func (auth *Middleware) VerifyToken(next http.Handler) http.Handler {
-	f := func(w http.ResponseWriter, r *http.Request) {
+func (auth *Middleware) AuthorizeMessage(msg *amqp091.Delivery) error {
+	token, err := extractTokenFromMessage(msg)
+	if err != nil {
+		log.Printf("Unable to extract token %s\n", err)
+		return err
+	}
 
+	return verifyToken(token, auth)
+}
+
+func (auth *Middleware) AuthorizeHttpRequest(request http.Handler) http.Handler {
+	f := func(w http.ResponseWriter, r *http.Request) {
 		token, err := extractTokenFromRequest(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			log.Print(err.Error())
 		}
 
-		goCloakConfig := auth.KeyCloakConfig
-		goCloak := goCloakConfig.GoCloak
-		goCloak.RestyClient().SetDebug(auth.KeyCloakConfig.DebugActive)
-
-		result, err := goCloak.RetrospectToken(context.Background(), token, goCloakConfig.ClientId, goCloakConfig.ClientSecret, goCloakConfig.Realm)
+		err = verifyToken(token, auth)
 		if err != nil {
-			msg := fmt.Sprintf("Invalid or malformed token: %s", err.Error())
-			http.Error(w, msg, http.StatusUnauthorized)
-			log.Print(msg)
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			log.Print(err)
 			return
 		}
 
-		if !*result.Active {
-			http.Error(w, "Invalid or expired Token", http.StatusUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(w, r)
+		request.ServeHTTP(w, r)
 	}
 
 	return http.HandlerFunc(f)
@@ -95,8 +95,39 @@ func ExtractUserIdFromToken(w http.ResponseWriter, r *http.Request, keyCloakConf
 	return fmt.Sprintf("%v", id)
 }
 
+func verifyToken(token string, auth *Middleware) error {
+
+	goCloakConfig := auth.KeyCloakConfig
+	goCloak := goCloakConfig.GoCloak
+	goCloak.RestyClient().SetDebug(auth.KeyCloakConfig.DebugActive)
+
+	result, err := goCloak.RetrospectToken(context.Background(), token, goCloakConfig.ClientId, goCloakConfig.ClientSecret, goCloakConfig.Realm)
+	if err != nil {
+		return fmt.Errorf("invalid or malformed token: %s", err.Error())
+	}
+
+	if !*result.Active {
+		return fmt.Errorf("invalid or expired token")
+	}
+
+	return nil
+}
+
 func extractTokenFromRequest(r *http.Request) (string, error) {
 	token := r.Header.Get("Authorization")
+	return extractToken(token)
+}
+
+func extractTokenFromMessage(msg *amqp091.Delivery) (string, error) {
+	token := msg.Headers["Authorization"]
+	if token == nil {
+		return "", fmt.Errorf("authorization header missing")
+	}
+
+	return extractToken(token.(string))
+}
+
+func extractToken(token string) (string, error) {
 	if token == "" {
 		return "", fmt.Errorf("authorization header missing")
 	}
