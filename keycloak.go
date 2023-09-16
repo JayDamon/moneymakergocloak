@@ -115,6 +115,7 @@ func verifyToken(token string, auth *Middleware) error {
 
 func extractTokenFromRequest(r *http.Request) (string, error) {
 	token := r.Header.Get("Authorization")
+	fmt.Printf("Token Found: %s\n", token)
 	return extractToken(token)
 }
 
