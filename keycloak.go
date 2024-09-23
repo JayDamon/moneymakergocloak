@@ -12,7 +12,7 @@ import (
 	"github.com/Nerzal/gocloak/v12"
 )
 
-type Middleware struct {
+type KeycloakMiddleware struct {
 	KeyCloakConfig *Configuration
 }
 
@@ -24,16 +24,22 @@ type Configuration struct {
 	DebugActive  bool
 }
 
-func NewMiddleWare(config *Configuration) *Middleware {
-	return &Middleware{KeyCloakConfig: config}
+type Middleware interface {
+	AuthorizeMessage(msg *amqp091.Delivery) error
+	AuthorizeHttpRequest(request http.Handler) http.Handler
+	ExtractUserIdFromToken(token *string) (string, error)
+}
+
+func NewMiddleWare(config *Configuration) Middleware {
+	return &KeycloakMiddleware{KeyCloakConfig: config}
 }
 
 func NewConfiguration() *Configuration {
 
 	issuerUri := getOrDefault("ISSUER_URI", "http://keycloak:8081/auth")
-	clientId := getOrDefault("CLIENT_NAME", "account-link-service-service")
-	clientSecret := getOrDefault("CLIENT_SECRET", "wQeV8pZwtBf9dIdKTGrqceyM3eeleokY")
-	realm := getOrDefault("REALM", "moneymaker")
+	clientId := getOrFail("CLIENT_NAME")
+	clientSecret := getOrFail("CLIENT_SECRET")
+	realm := getOrFail("REALM")
 	debugActive := getOrDefaultBool("DEBUG_ACTIVE", false)
 
 	return &Configuration{
@@ -45,8 +51,8 @@ func NewConfiguration() *Configuration {
 	}
 }
 
-func (auth *Middleware) AuthorizeMessage(msg *amqp091.Delivery) error {
-	token, err := extractTokenFromMessage(msg)
+func (auth *KeycloakMiddleware) AuthorizeMessage(msg *amqp091.Delivery) error {
+	token, err := ExtractBearerTokenFromMessage(msg)
 	if err != nil {
 		log.Printf("Unable to extract token %s\n", err)
 		return err
@@ -55,9 +61,9 @@ func (auth *Middleware) AuthorizeMessage(msg *amqp091.Delivery) error {
 	return verifyToken(token, auth)
 }
 
-func (auth *Middleware) AuthorizeHttpRequest(request http.Handler) http.Handler {
+func (auth *KeycloakMiddleware) AuthorizeHttpRequest(request http.Handler) http.Handler {
 	f := func(w http.ResponseWriter, r *http.Request) {
-		token, err := extractTokenFromRequest(r)
+		token, err := ExtractBearerTokenFromRequest(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			log.Print(err.Error())
@@ -76,30 +82,61 @@ func (auth *Middleware) AuthorizeHttpRequest(request http.Handler) http.Handler 
 	return http.HandlerFunc(f)
 }
 
-func ExtractUserIdFromToken(w http.ResponseWriter, r *http.Request, keyCloakConfig *Configuration) string {
-	token, err := extractTokenFromRequest(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		log.Print(err.Error())
-	}
+func (auth *KeycloakMiddleware) ExtractUserIdFromToken(token *string) (string, error) {
+	return extractUserIdFromToken(*token, auth.KeyCloakConfig)
+}
 
+func extractUserIdFromToken(token string, keyCloakConfig *Configuration) (string, error) {
 	goCloak := keyCloakConfig.GoCloak
 	_, claims, err := goCloak.DecodeAccessToken(context.Background(), token, keyCloakConfig.Realm)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		log.Print(err.Error())
+		return "", err
 	}
 
 	id := (*claims)["sub"]
 
-	return fmt.Sprintf("%v", id)
+	return fmt.Sprintf("%v", id), nil
 }
 
-func verifyToken(token string, auth *Middleware) error {
+func ExtractUserIdFromTokenFromRequest(w http.ResponseWriter, r *http.Request, keyCloakConfig *Configuration) string {
+	token, err := ExtractBearerTokenFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		log.Print(err.Error())
+	}
+
+	userId, err := extractUserIdFromToken(token, keyCloakConfig)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		log.Print(err.Error())
+	}
+
+	return userId
+}
+
+func GetAuthorizationHeaderFromRequest(r *http.Request) (string, error) {
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		return "", fmt.Errorf("authorization header missing")
+	}
+	return token, nil
+}
+
+func GetAuthorizationHeaderFromMessage(msg *amqp091.Delivery) (string, error) {
+	token := msg.Headers["Authorization"]
+	if token == "" {
+		return "", fmt.Errorf("authorization header missing")
+	}
+	return token.(string), nil
+}
+
+func verifyToken(token string, auth *KeycloakMiddleware) error {
 
 	goCloakConfig := auth.KeyCloakConfig
 	goCloak := goCloakConfig.GoCloak
 	goCloak.RestyClient().SetDebug(auth.KeyCloakConfig.DebugActive)
+
+	log.Println(token)
 
 	result, err := goCloak.RetrospectToken(context.Background(), token, goCloakConfig.ClientId, goCloakConfig.ClientSecret, goCloakConfig.Realm)
 	if err != nil {
@@ -113,13 +150,12 @@ func verifyToken(token string, auth *Middleware) error {
 	return nil
 }
 
-func extractTokenFromRequest(r *http.Request) (string, error) {
+func ExtractBearerTokenFromRequest(r *http.Request) (string, error) {
 	token := r.Header.Get("Authorization")
-	fmt.Printf("Token Found: %s\n", token)
 	return extractToken(token)
 }
 
-func extractTokenFromMessage(msg *amqp091.Delivery) (string, error) {
+func ExtractBearerTokenFromMessage(msg *amqp091.Delivery) (string, error) {
 	token := msg.Headers["Authorization"]
 	if token == nil {
 		return "", fmt.Errorf("authorization header missing")
@@ -150,6 +186,14 @@ func getOrDefault(envVar string, defaultVal string) string {
 	val := os.Getenv(envVar)
 	if val == "" {
 		return defaultVal
+	}
+	return val
+}
+
+func getOrFail(envVar string) string {
+	val := os.Getenv(envVar)
+	if val == "" {
+		log.Fatalf("param {%s} must be provided", envVar)
 	}
 	return val
 }
