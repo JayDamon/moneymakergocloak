@@ -67,6 +67,7 @@ func (auth *KeycloakMiddleware) AuthorizeHttpRequest(request http.Handler) http.
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			log.Print(err.Error())
+			return
 		}
 
 		err = verifyToken(token, auth)
@@ -94,24 +95,21 @@ func extractUserIdFromToken(token string, keyCloakConfig *Configuration) (string
 	}
 
 	id := (*claims)["sub"]
-
 	return fmt.Sprintf("%v", id), nil
 }
 
-func ExtractUserIdFromTokenFromRequest(w http.ResponseWriter, r *http.Request, keyCloakConfig *Configuration) string {
+func ExtractUserIdFromRequest(r *http.Request, keyCloakConfig *Configuration) (string, error) {
 	token, err := ExtractBearerTokenFromRequest(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		log.Print(err.Error())
+		return "", err
 	}
 
 	userId, err := extractUserIdFromToken(token, keyCloakConfig)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		log.Print(err.Error())
+		return "", err
 	}
 
-	return userId
+	return userId, nil
 }
 
 func GetAuthorizationHeaderFromRequest(r *http.Request) (string, error) {
